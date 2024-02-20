@@ -1,0 +1,358 @@
+---
+title: "Time Series Finals"
+output: pdf_document
+date: "2023-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+pacman::p_load(tidyverse, tsbox, stargazer, scales, quantmod, formattable,
+               tsibble, forecast, tseries, lubridate, fredr, citr,
+               expsmooth, WDI, knitr, broom, ThemePark, scales, vars,
+               kableExtra, knitr, data.table, cowplot, patchwork,
+               readxl, formattable, reprex, corrplot, ForecastComb, 
+               wesanderson, xtable)
+library(tsDyn)
+# Import Intord
+source('/Users/varsha/Desktop/Postgrad/Year 2/Sem 3/Time Series Analysis/intord.R')
+```
+
+
+```{r import data, echo=FALSE}
+
+#Import Data
+data <- read_excel("~/Desktop/Postgrad/Year 2/Sem 3/Time Series Analysis/Final/data.xls", 
+                      col_types = c("date", "numeric", "numeric", 
+                                    "numeric", "numeric", "numeric", 
+                                    "numeric", "numeric", "numeric"))
+```
+
+# (i)
+### Intord Function
+```{r,fig.height=5, fig.width=10}
+intord(data$`ln(Money Supply)`)
+```
+### Intord for Money Supply
+A visual inspection shows that the data is not stationary with a non-constant mean. The ACF of the level shows a highly persistent process and the standard deviation of the first difference decreases by less than half of that for the level series. The ACF plot decays quickly for the first difference rather than the ACF for levels. Even though ADF test shows its stationary at levels and at first difference, based on visual evidence, standard deviation, and the ACF plot of the first difference indicate that the process is likely I(1) making the first difference sufficient.
+
+```{r, fig.height=5, fig.width=10}
+intord(data$`ln(GDP)`)
+```
+
+```{r, fig.height=5, fig.width=10}
+intord(data$`ln(Unemploy)`)
+```
+
+```{r, fig.height=5, fig.width=10}
+intord(data$`ln(CPI)`)
+```
+
+## Order of integration for money supply is one, GDP is one, unemployment is 1 and CPI is also one. 
+
+```{r, echo=FALSE}
+#Differencing GDP at its first difference
+data <- data %>%
+  mutate(diff_gdp = `ln(GDP)` - lag(`ln(GDP)` ))
+
+#Differencing Money Supply at its first difference
+data <- data %>%
+  mutate(diff_moneysupply = `ln(Money Supply)` - lag(`ln(GDP)` ))
+
+#Differencing for Unemployment at its first difference
+data <- data %>%
+  mutate(diff_unemp = `ln(Unemploy)` - lag(`ln(Unemploy)`))
+
+#Differencing for CPI at its first difference
+data <- data %>%
+  mutate(diff_cpi = `ln(CPI)` - lag(`ln(CPI)`))
+```
+
+```{r}
+plot_MS <- ggplot(data, aes(x = data$date, y = data$`ln(Money Supply)`, group =1)) + 
+  geom_line(col='Pink') + 
+  labs (x = "Year", y ="Money Supply") + ggtitle ("Money Supply") + theme_avatar()
+
+plot_GDP <- ggplot(data, aes(x = data$date, y = data$`ln(GDP)`, group =1)) + 
+  geom_line(col='Pink') + 
+    labs (x = "Year", y ="GDP") + ggtitle ("GDP") + theme_avatar()
+
+plot_Unemp <- ggplot(data, aes(x = data$date, y = data$`ln(Unemploy)`, group =1)) + 
+  geom_line(col='Pink') + 
+  labs (x = "Year", y ="Unemployment") + ggtitle ("Unemployment") + theme_avatar()
+
+plot_CPI <- ggplot(data, aes(x = data$date, y = data$`ln(CPI)`, group =1)) + 
+  geom_line(col='Pink') + 
+  labs (x = "Year", y ="CPI") + ggtitle ("CPI") + theme_avatar()
+```
+
+## Question 2 
+
+```{r, echo=FALSE , results='hide'}
+Johansen_1 <-ca.jo(data[,c("diff_moneysupply", "diff_gdp", "diff_unemp", "diff_cpi")], 
+      type = 'eigen', spec = 'transitory', 
+      ecdet = 'none', K = 2)
+summary(Johansen_1)
+```
+
+* We can form the stationary series by multiplying the series by the eigenvectors.
+  $$Q = diffmoneysupply + 164.16743 diffgdp + 13.32297 diffunemp - 172.54883 diffcpi$$
+
+```{r, echo=FALSE}
+data <- data %>%
+  mutate(q = diff_moneysupply + 164.16743*diff_gdp + 13.32297*diff_unemp - 172.54883*diff_cpi,
+         Steps = seq(1,116,1))
+
+ggplot(data) +  theme_bw() + 
+  geom_line(aes(x = Steps, y = q), col = 'blue', size=0.6) + 
+  ggtitle("A Linear Combination of Our Variables") +
+  theme(axis.title = element_text(size = 10),
+        axis.text = element_text(size = 8.25), 
+        plot.title = element_text(size = 12))
+```
+
+
+```{r, echo=FALSE}
+#train and test set 
+last_10_observations <- tail(data, 10)
+first_20_observations <- head(data, 20)
+comb_train <- head(data, 106)[-c(1),]
+comb_train_ts <- ts(comb_train, start = c(1991, 2), frequency = 4) 
+comb_train_ts <- comb_train_ts[,c("diff_moneysupply", "diff_gdp", "diff_unemp", "diff_cpi")]
+# Create Test Dataset 
+comb_test <- tail(data, 10)
+comb_test_ts <- ts(comb_test, start = c(2017, 3), frequency = 4)
+comb_test_ts <- comb_test_ts[,c("diff_moneysupply", "diff_gdp", "diff_unemp", "diff_cpi")]
+
+```
+
+
+```{r, echo=FALSE}
+vecm_urca_model_1 <- cajorls(z = Johansen_1,
+                             r = 3, 
+                             reg.number = 1)
+vecm_vars <- vec2var(z = Johansen_1,
+                     r = 3)
+
+vecm_model_2 <- VECM (comb_train_ts,lag = 4, r = 3 , estim = "ML")
+forecast_vecm_model_2 <- predict(vecm_model_2, n.ahead=10)
+#pick one
+
+```
+
+```{r}
+vecm_plot <- ggplot() +
+  geom_line(aes(y = coredata(comb_test_ts[,1]), x = as.Date(time(comb_test_ts))), 
+            color = 'blue') +
+  geom_line(aes(y = coredata(forecast_vecm_model_2[,1]), x = as.Date(time(comb_test_ts))), 
+            color = 'red') +
+  geom_line(aes(y = coredata(comb_train_ts[,1]), 
+                x = as.Date(time(comb_train_ts))), 
+            color = 'black') + 
+  ggtitle("VECM_Model") +
+  xlab(NULL) +
+  ylab("GDP")
+```
+
+
+```{r, echo=FALSE}
+print(
+xtable::xtable(vecm_model_2$coefficients,
+include.rownames = F,
+caption = 'Results for the Equation'),
+caption.placement = "top",
+comment = F
+)
+```
+
+
+\begin{table}[ht]
+\centering
+\caption{Results for the Equation} 
+\begin{tabular}{l|cccc}
+  \hline
+  & Equation diff\_moneysupply & Equation diff\_gdp & Equation diff\_unemp & Equation diff\_cpi \\ 
+  \hline
+ECT1 & -0.01 & -0.02 & -0.08 & -0.00 \\ 
+ECT2 & -0.45 & -0.87 & -3.13 & 0.33 \\ 
+ECT3 & -0.03 & -0.07 & -0.62 & 0.01 \\ 
+Intercept & 0.00 & 0.00 & -0.05 & 0.00 \\ 
+diff\_moneysupply -1 & 0.43 & 0.02 & 0.29 & 0.05 \\ 
+diff\_gdp -1 & -0.98 & 0.04 & 0.74 & -0.28 \\ 
+diff\_unemp -1 & 0.05 & 0.03 & -0.27 & -0.06 \\ 
+diff\_cpi -1 & -0.10 & 0.41 & -4.22 & 0.34 \\ 
+diff\_moneysupply -2 & -0.02 & 0.06 & -0.45 & 0.05 \\ 
+diff\_gdp -2 & -0.63 & 0.16 & -1.07 & -0.31 \\ 
+diff\_unemp -2 & -0.01 & 0.00 & -0.04 & -0.04 \\ 
+diff\_cpi -2 & 0.16 & 0.20 & -2.14 & 0.21 \\ 
+diff\_moneysupply -3 & 0.32 & 0.02 & 0.72 & -0.16 \\ 
+diff\_gdp -3 & -0.48 & 0.19 & -1.38 & -0.09 \\ 
+diff\_unemp -3 & -0.01 & -0.00 & 0.14 & 0.02 \\ 
+diff\_cpi -3 & 0.16 & 0.07 & -0.65 & 0.13 \\ 
+diff\_moneysupply -4 & 0.04 & -0.04 & 0.17 & 0.02 \\ 
+diff\_gdp -4 & -0.32 & 0.16 & -0.60 & -0.04 \\ 
+diff\_unemp -4 & -0.03 & -0.01 & 0.00 & 0.01 \\ 
+diff\_cpi -4 & 0.24 & -0.06 & 0.50 & -0.04 \\ 
+   \hline
+\end{tabular}
+\end{table}
+
+
+```{r, echo =FALSE, results='hide'}
+print(
+xtable::xtable(vecm_urca_model_1$rlm,
+include.rownames = F,
+caption = 'Results for the Equation'),
+caption.placement = "top",
+comment = F
+)
+```
+\begin{table}[ht]
+\centering
+\caption{Results for the Equation} 
+\begin{tabular}{rrrrr}
+  \hline
+ & Estimate & Std. Error & t value & Pr($>$$|$t$|$) \\ 
+  \hline
+ect1 & -0.0045 & 0.0027 & -1.71 & 0.0911 \\ 
+  ect2 & -0.9305 & 0.1970 & -4.72 & 0.0000 \\ 
+  ect3 & -0.0468 & 0.0188 & -2.48 & 0.0146 \\ 
+  constant & 0.0060 & 0.0019 & 3.18 & 0.0020 \\ 
+  diff\_moneysupply.dl1 & 0.5495 & 0.0792 & 6.94 & 0.0000 \\ 
+  diff\_gdp.dl1 & -0.4902 & 0.1607 & -3.05 & 0.0029 \\ 
+  diff\_unemp.dl1 & 0.0498 & 0.0161 & 3.10 & 0.0025 \\ 
+  diff\_cpi.dl1 & -0.2924 & 0.1203 & -2.43 & 0.0168 \\ 
+   \hline
+\end{tabular}
+\end{table}
+
+```{r, echo=FALSE}
+data_new <- data.frame( MS = data$diff_moneysupply, GDP = data$diff_gdp, Unemp = data$`ln(Unemploy)`, CPI = data$`ln(CPI)`)
+data_new<-data_new[complete.cases(data_new),]
+lag_order <- VARselect(data_new, lag.max = 10, type = "const")
+lag_order
+Var1<-VAR(comb_train_ts, 
+           lag.max = 4, 
+           type = 'both', 
+           ic = 'AIC')
+Var1
+AIC(Var1)
+Var2 <- VAR(comb_train_ts,
+           lag.max = 6, 
+           type = 'both', 
+           ic = 'AIC')
+
+Var3 <- VAR(comb_train_ts[,c("diff_gdp", "diff_cpi" )],
+                   lag.max = 4,
+                   type = 'both',
+                   ic = 'AIC',
+                   exogen = comb_train[,c("diff_moneysupply","diff_unemp")])
+Var3
+AIC(Var3)
+
+Var4 <- VAR(comb_train_ts[,c("diff_moneysupply","diff_unemp")],
+                   lag.max = 4,
+                   type = 'both',
+                   ic = 'AIC',
+                   exogen = comb_train[,c("diff_cpi", "diff_gdp")])
+Var4
+AIC(Var4)
+```
+
+```{r}
+vecm_plot <- ggplot() +
+  geom_line(aes(y = coredata(comb_test_ts[,1]), x = as.Date(time(comb_test_ts))), 
+            color = 'blue') +
+  geom_line(aes(y = coredata(forecast_vecm_model_2[,1]), x = as.Date(time(comb_test_ts))), 
+            color = 'red') +
+  geom_line(aes(y = coredata(comb_train_ts[,1]), 
+                x = as.Date(time(comb_train_ts))), 
+            color = 'black') + 
+  ggtitle("VECM_Model") +
+  xlab(NULL) +
+  ylab("GDP")
+```
+
+
+```{r, echo = F, eval = T, warning = F, fig.width = 14, results = 'asis'}
+kable(tidy(Var1$varresult$diff_moneysupply), digits = 3, caption = 'Results for MS Equation')
+kable(tidy(Var1$varresult$diff_gdp), digits = 3, caption = 'Results for GDP Equation')
+kable(tidy(Var1$varresult$diff_unemp), digits = 3, caption = 'Results for Unemployment Equation')
+kable(tidy(Var1$varresult$diff_cpi), digits = 3, caption = 'Results for CPI Equation')
+kable(tidy(Var2$varresult$diff_moneysupply), digits = 3, caption = 'Results for MS Equation')
+kable(tidy(Var2$varresult$diff_gdp), digits = 3, caption = 'Results for GDP Equation')
+kable(tidy(Var2$varresult$diff_unemp), digits = 3, caption = 'Results for Unemployment Equation')
+kable(tidy(Var2$varresult$diff_cpi), digits = 3, caption = 'Results for CPI Equation')
+```
+
+```{r, echo=FALSE}
+forecast_Var1 <- forecast(Var1, h = 10)
+forecast_Var2 <- predict(Var3, n.ahead = 10, dumvar = comb_test_ts[, c("diff_moneysupply","diff_unemp")])
+forecast_Var3 <- predict(Var4, n.ahead = 10, dumvar = comb_test_ts[, c("diff_gdp","diff_cpi")])
+```
+
+```{r}
+var_plot <- ggplot() +
+  geom_line(aes(y = coredata(comb_test_ts[,1]), x = as.Date(time(comb_test_ts))), 
+            color = 'blue') +
+  geom_line(aes(y = coredata(forecast_Var1$forecast$diff_moneysupply$mean), x = as.Date(time(comb_test_ts))), 
+            color = 'red') +
+  geom_line(aes(y = coredata(comb_train_ts[,1]), 
+                x = as.Date(time(comb_train_ts))), 
+            color = 'black') + 
+  ggtitle("VAR_1") +
+  xlab(NULL) +
+  ylab("Money Supply")
+#plots?
+```
+
+
+```{r, echo=FALSE}
+#Loss function
+loss_functions <- function(predict, actual) {
+  predict <- as.vector(predict)
+  actual <- as.vector(actual)
+  mse <- mean((predict-actual)^2)
+  mae <- mean(abs(predict-actual))
+  mape <- mean(abs((predict-actual)/actual)*100)
+  msle <- mean((log(actual) - log(predict) )^2)
+  return(list(mse = mse,
+              mae = mae,
+              mape = mape,
+              msle = msle))
+}
+```
+
+```{r, echo=FALSE}
+losses_Var1_MS <- loss_functions(forecast_Var1$forecast$diff_moneysupply$mean, comb_test_ts[, c("diff_moneysupply")])
+losses_Var1_GDP <- loss_functions(forecast_Var1$forecast$diff_gdp$mean, comb_test_ts[, c("diff_gdp")])
+losses_Var1_UNEMP <- loss_functions(forecast_Var1$forecast$diff_unemp$mean, comb_test_ts[, c("diff_unemp")])
+losses_Var1_CPI <- loss_functions(forecast_Var1$forecast$diff_cpi$mean, comb_test_ts[, c("diff_cpi")])
+
+losses_Var2_GDP <- loss_functions(forecast_Var2$fcst$diff_gdp[,1], comb_test_ts[, c("diff_gdp")])
+losses_Var2_CPI <- loss_functions(forecast_Var2$fcst$diff_cpi[,1], comb_test_ts[, c("diff_cpi")])
+
+losses_Var3_MS <- loss_functions(forecast_Var3$fcst$diff_moneysupply[,1], comb_test_ts[, c("diff_moneysupply")])
+losses_Var3_UNEMP <- loss_functions(forecast_Var3$fcst$diff_unemp [,1], comb_test_ts[, c("diff_unemp")])
+```
+
+```{r, echo=FALSE}
+Forecast_plot1 <-autoplot(forecast_Var1) + theme_bw()
+forecast_Var1%>%
+  autoplot()
+plot(forecast_Var2)
+plot(forecast_Var3)
+```
+
+```{r, echo=FALSE}
+plot(forecast_Var2, main = "Forecast Plot for Model 2", xlab = "Time", col = "red", lty = 2)
+###make plots look prettier
+plot(forecast_Var3, main = "Forecast Plot for Model 3", xlab = "Time", col = "blue", lty = 2)
+```
+## VECM slide 4 to 5  algebraic equation ?
+
+
+
+
+
+
+
