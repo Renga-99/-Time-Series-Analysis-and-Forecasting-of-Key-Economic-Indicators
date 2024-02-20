@@ -1,0 +1,346 @@
+---
+title: "Midterm"
+author: "Renganathan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, cpack, warning=F, eval = F, message=F, echo = T}
+  
+#Installing the 'pacman' lets you install 
+#and load packages in a single line command.
+
+  pacman::p_load(ggplot2, tidyverse, tsbox, 
+               tsibble, forecast, tseries, lubridate,
+               expsmooth, WDI, knitr, broom, scales,fredr,patchwork,ForecastComb,urca,vars)
+  
+```
+
+```{r}
+#Set directories:
+root_directory <- 'D:/Time Series'
+function_directory <- paste0(root_directory,'/R Functions')
+
+#Read the data in:
+source(file= paste0(function_directory,'/intord.R'))
+
+```
+
+```{r}
+fredr_set_key("1d387ba41cade98cbf0b2235f1c9b09d")
+cpi_new_veh <- fredr(series_id = "CUUR0000SETA01",
+                    observation_start = as.Date("1970-01-01"),
+                    observation_end = as.Date("2019-12-01")) %>%
+  select(date, value) %>%
+  mutate(index_first_diff = value - lag(value),
+         index_second_diff = difference(value, differences = 2)) %>%
+  tsibble(index = date) 
+```
+```{r}
+cpi_new_veh
+```
+
+
+# Plotting
+
+```{r}
+plot(cpi_new_veh$value, xlab = "Index", ylab = "cpi_new_veh$value",
+    main = "Consumer Price Index for All Urban Consumers: New Vehicles in U.S. City Average")
+
+head(cpi_new_veh)
+summary(cpi_new_veh)
+```
+
+```{r}
+cpi_intord_results <- intord(cpi_new_veh$value, year = 1970, freq = 12, period = 1)
+cpi_intord_results$test_results
+```
+# Detrended
+
+```{r}
+detrended_cpi <- lm(value ~ date, data = cpi_new_veh)
+
+dcpi <- cpi_new_veh %>%
+  mutate(detrended_value = value - predict(detrended_cpi))
+print(dcpi)
+
+ggplot(dcpi, aes(x =  date)) +
+  geom_line(aes(y = detrended_value), linewidth = 1.55) +
+  theme_bw() +
+  xlab('Time') + ylab('Detrended') +
+  scale_y_continuous(label = scales::comma, breaks = scales::pretty_breaks(7)) +
+  labs(title = "Detrended CPI Over Time")
+```
+
+```{r}
+cpi_intord_results_det <- intord(dcpi$detrended_value, year = 1970, freq = 12, period = 1)
+cpi_intord_results_det$test_results
+```
+Better to take the first difference 
+
+```{r}
+ggAcf(cpi_new_veh$index_first_diff) | ggPacf(cpi_new_veh$index_first_diff)
+
+```
+
+# Train and test split
+
+```{r}
+num_test_points <- 6
+
+# Calculate the number of total data points
+total_data_points <- length(cpi_new_veh$value)
+
+# Create the training and testing datasets
+training_data <- cpi_new_veh$value[1:(total_data_points - num_test_points)]
+testing_data <- cpi_new_veh$value[(total_data_points - num_test_points + 1):total_data_points]
+
+ts_train <- ts(training_data, start = c(1970, 1), freq = 12)
+ts_test <- ts(testing_data, start = c(2019, 7), freq = 12)
+ts_test
+```
+
+
+# Modeling
+
+
+
+```{r}
+# Model - 1
+# p = 6, d = 1, q = 7
+
+model_1 <- Arima(ts_train,
+                      order = c(6, 1, 7))
+
+print(model_1)
+```
+
+
+```{r}
+# Model - 2
+# p = 4, d = 1, q = 7
+model_2 <- Arima(ts_train,
+                      order = c(4, 1, 7))
+
+print(model_2)
+```
+
+
+
+```{r}
+# Model - 3
+# p = 6, d = 1, q = 5
+
+model_3 <- Arima(ts_train,
+                      order = c(6, 1, 5))
+
+print(model_3)
+```
+
+
+```{r}
+# Model - 4
+# p = 4, d = 1, q = 3
+
+model_4 <- Arima(ts_train,
+                      order = c(4, 1, 3))
+
+print(model_4)
+```
+
+
+
+# Brute force model
+```{r}
+brute_force_model <- auto.arima(ts(ts_train),
+                                ic = 'aic',
+                                trace = T)
+```
+
+
+
+# Serial Correlation Checks
+
+```{r}
+ggAcf(model_1$residuals)
+ggAcf(model_2$residuals)
+ggAcf(model_3$residuals)
+ggAcf(model_4$residuals)
+```
+
+
+
+# Ljung-Box test
+```{r}
+Box.test(model_1$residuals, 
+         type = "Ljung-Box")
+
+Box.test(model_2$residuals, 
+         type = "Ljung-Box")
+
+Box.test(model_3$residuals, 
+         type = "Ljung-Box")
+
+Box.test(model_4$residuals, 
+         type = "Ljung-Box")
+```
+all the models have serial correlation
+
+
+# Forecasting models
+
+```{r}
+# Model - 1
+forecast_model_1 <- forecast(model_1, 
+                                 h = 6)
+print(forecast_model_1)
+
+
+# Model - 2
+forecast_model_2 <- forecast(model_2, 
+                                 h = 6)
+print(forecast_model_2)
+
+
+# Model - 3
+forecast_model_3 <- forecast(model_3,
+                                 h = 6)
+print(forecast_model_3)
+
+
+# Model - 4
+forecast_model_4 <- forecast(model_4,
+                                 h = 6)
+print(forecast_model_4)
+
+```
+
+ploting the forecasts
+
+```{r}
+autoplot(forecast_model_1, xlim = c(2015.12,2020), ylim=c(140,155))
+autoplot(forecast_model_2, xlim = c(2015.12,2020), ylim=c(140,155))
+autoplot(forecast_model_3, xlim = c(2015.12,2020), ylim=c(140,155))
+autoplot(forecast_model_4, xlim = c(2015.12,2020), ylim=c(140,155))
+```
+
+
+
+# calculating the loss functions 
+```{r}
+loss_functions <- function(predict, actual) {
+predict <- as.vector(predict)
+actual <- as.vector(actual)
+mse <- mean((predict-actual)^2)
+mae <- mean(abs(predict-actual))
+mape <- mean(abs((predict-actual)/actual)*100)
+msle <- mean((log(actual) - log(predict))^2)
+return(list(mse = mse,
+mae = mae,
+mape = mape,
+msle = msle))
+}
+```
+
+```{r, warning=FALSE}
+print("Model 1")
+# Model - 1
+loss_model_1 <- loss_functions(forecast_model_1$mean, ts_test)
+print(loss_model_1)
+print(paste("Model RMSE:", sqrt(loss_model_1$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_1$mae)))
+
+print("Model 2")
+# Model - 2
+loss_model_2 <- loss_functions(forecast_model_2$mean, ts_test)
+print(loss_model_2)
+print(paste("Model RMSE:", sqrt(loss_model_2$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_2$mae)))
+
+print("Model 3")
+# Model - 3
+loss_model_3 <- loss_functions(forecast_model_3$mean, ts_test)
+print(loss_model_3)
+print(paste("Model RMSE:", sqrt(loss_model_3$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_3$mae)))
+
+print("Model 4")
+# Model - 4
+loss_model_4 <- loss_functions(forecast_model_4$mean, ts_test)
+print(loss_model_4)
+print(paste("Model RMSE:", sqrt(loss_model_4$mse)))
+print(paste("Model RMAE:", sqrt(loss_model_4$mae)))
+```
+```{r}
+# OLS combination
+
+
+cpi_combination <- lm(ts_test ~ forecast_model_1$mean[1:6] + forecast_model_2$mean[1:6]
+                      + forecast_model_3$mean[1:6])
+summary(cpi_combination)
+
+
+```
+
+```{r}
+# root mean square error
+print(sqrt(mean(ts_test - cpi_combination$fitted.values)^2))
+
+```
+```{r}
+# Granger-Bates forecast combination method
+
+cpi_combination_object <- foreccomb(testing_data,
+                                cbind(forecast_model_1$mean[1:6],
+                                      forecast_model_2$mean[1:6],
+                                      forecast_model_3$mean[1:6]))
+print(cpi_combination_object)
+
+cpi_granger_bates <- comb_BG(cpi_combination_object)
+print(cpi_granger_bates)
+
+```
+
+```{r}
+# Model forecasts
+model1_forecast <- c(147.0808, 146.6595, 146.5389, 146.7205, 147.1209, 147.3439) 
+model2_forecast <- c(147.0104, 146.7032, 146.6455, 146.6778, 147.0392, 147.3450)
+model3_forecast <- c(147.2177, 147.1316, 147.0524, 147.1552, 147.3390, 147.4712)
+
+# Actual test observations
+test_obs <- c(147.035, 146.456, 145.854, 145.726, 145.728, 146.220)  
+
+# preferred model assignment
+preferred_model <- model1_forecast
+
+# forecast combination object
+fc_object <- foreccomb(test_obs, cbind(model1_forecast, model2_forecast, model3_forecast))
+
+# Granger-Bates combined forecast
+gb_forecast <- comb_BG(fc_object)
+
+# Plot the forecasts
+plot(test_obs, type="o", col="black", ylim=c(144,148), 
+     xlab="Time", ylab="Value")
+lines(preferred_model, col="blue", lwd=2) 
+lines(gb_forecast$Fitted, col="red", lwd=2)
+legend("bottomleft", legend=c("Observed", "Preferred Model", "Granger-Bates"),
+       col=c("black", "blue", "red"), lwd=c(1,2,2),cex=0.8)
+
+```
+```{r}
+
+# Compute forecast errors
+preferred_error <- sqrt(mean((test_obs - preferred_model)^2)) 
+gb_error <- sqrt(mean((test_obs - gb_forecast$Fitted)^2))
+
+# Print forecast errors
+print(paste("Preferred model RMSE:", round(preferred_error, 2)))
+print(paste("Granger-Bates RMSE:", round(gb_error,2)))
+
+```
+
